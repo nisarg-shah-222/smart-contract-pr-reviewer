@@ -1,0 +1,41 @@
+name: "Smart Contract PR Reviewer"
+description: "Automatically analyzes Solidity PRs and posts LLM-based audit comments."
+author: "Arbet"
+inputs:
+  backend_url:
+    description: "The URL of your Python backend that performs the review"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Prepare payload
+      run: python ${{ github.action_path }}/scripts/prepare_payload.py
+      shell: bash
+
+    - name: Call backend
+      run: |
+        echo "Calling backend at ${{ inputs.backend_url }}..."
+        curl -s -X POST "${{ inputs.backend_url }}/analyze" \
+          -H "Content-Type: application/json" \
+          --data-binary @payload.json > response.json
+        cat response.json
+      shell: bash
+
+    - name: Add comment to PR
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        token: ${{ github.token }}
+        issue-number: ${{ github.event.pull_request.number }}
+        body: |
+          ## 🤖 Smart Contract PR Review
+          ${{ fromJson(steps.call_backend.outputs.response).review_comment }}
