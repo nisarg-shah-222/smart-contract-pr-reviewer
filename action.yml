@@ -43,6 +43,10 @@ runs:
       if: steps.prepare_payload.outputs.has_changes == 'true'
       run: |
         echo "📡 Sending payload to backend API at ${{ inputs.backend_url }}..."
+        
+        # Debug: Show payload size
+        echo "📦 Payload size: $(wc -c < payload.json) bytes"
+        
         RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ inputs.backend_url }}/analyze" \
           -H "Content-Type: application/json" \
           --data-binary @payload.json)
@@ -51,14 +55,18 @@ runs:
         BODY=$(echo "$RESPONSE" | sed '$d')
 
         echo "✅ Response received from backend (HTTP Status: $HTTP_CODE):"
-        echo "$BODY" | jq '.'
-
-        if [ "$HTTP_CODE" -ne 200 ]; then
+        
+        # Only try to parse as JSON if status is 200
+        if [ "$HTTP_CODE" -eq 200 ]; then
+          echo "$BODY" | jq '.'
+          REVIEW_COMMENT=$(echo "$BODY" | jq -r '.review_comment')
+        else
+          echo "❌ Backend API error (HTTP Status: $HTTP_CODE)"
+          echo "Response body:"
+          echo "$BODY"
           echo "::error::Backend API returned status $HTTP_CODE"
           exit 1
         fi
-
-        REVIEW_COMMENT=$(echo "$BODY" | jq -r '.review_comment')
 
         echo "review_comment<<EOF" >> $GITHUB_OUTPUT
         echo "$REVIEW_COMMENT" >> $GITHUB_OUTPUT
