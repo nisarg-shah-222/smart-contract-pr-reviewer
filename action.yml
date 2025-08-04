@@ -23,11 +23,14 @@ runs:
       shell: bash
 
     - name: Call backend
+      id: call_backend
       run: |
         echo "Calling backend at ${{ inputs.backend_url }}..."
-        curl -s -X POST "${{ inputs.backend_url }}/analyze" \
+        response=$(curl -s -X POST "${{ inputs.backend_url }}/analyze" \
           -H "Content-Type: application/json" \
-          --data-binary @payload.json > response.json
+          --data-binary @payload.json)
+        echo "response=$response" >> $GITHUB_OUTPUT
+        echo "$response" > response.json
         cat response.json
       shell: bash
 
