@@ -8,37 +8,77 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Checkout code
+    # Step 1: Check out the code, fetching the entire history to allow diffing against main
+    - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0
+        fetch-depth: 0 # Important for fetching history to diff against the base branch
 
+    # Step 2: Set up the Python environment
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
 
-    - name: Prepare payload
+    # Step 3: Generate a diff file to be included in the payload
+    - name: Generate diff file
+      run: |
+        echo "📝 Generating diff against origin/main..."
+        # Fetch the main branch to ensure the base of the diff is up-to-date
+        git fetch origin main
+        git diff origin/main...HEAD > diff.patch
+        echo "✅ Diff generated:"
+        cat diff.patch
+      shell: bash
+
+    # Step 4: Prepare the payload with 'before' and 'after' code states
+    - name: Prepare payload with before and after states
+      id: prepare_payload
       run: python ${{ github.action_path }}/scripts/prepare_payload.py
       shell: bash
 
-    - name: Call backend
+    # Step 5: Call the backend API, but only if there were Solidity changes
+    - name: Call backend API
       id: call_backend
+      if: steps.prepare_payload.outputs.has_changes == 'true'
       run: |
-        echo "Calling backend at ${{ inputs.backend_url }}..."
-        response=$(curl -s -X POST "${{ inputs.backend_url }}/analyze" \
+        echo "📡 Sending payload to backend API at ${{ inputs.backend_url }}..."
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ inputs.backend_url }}/analyze" \
           -H "Content-Type: application/json" \
           --data-binary @payload.json)
-        echo "response=$response" >> $GITHUB_OUTPUT
-        echo "$response" > response.json
-        cat response.json
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        echo "✅ Response received from backend (HTTP Status: $HTTP_CODE):"
+        echo "$BODY" | jq '.'
+
+        if [ "$HTTP_CODE" -ne 200 ]; then
+          echo "::error::Backend API returned status $HTTP_CODE"
+          exit 1
+        fi
+
+        REVIEW_COMMENT=$(echo "$BODY" | jq -r '.review_comment')
+
+        echo "review_comment<<EOF" >> $GITHUB_OUTPUT
+        echo "$REVIEW_COMMENT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
       shell: bash
 
-    - name: Add comment to PR
+    # Step 6: Post the review comment on the PR, but only if a review was generated
+    - name: Comment on PR
+      if: steps.prepare_payload.outputs.has_changes == 'true'
       uses: peter-evans/create-or-update-comment@v4
       with:
         token: ${{ github.token }}
         issue-number: ${{ github.event.pull_request.number }}
         body: |
-          ## 🤖 Smart Contract PR Review
-          ${{ fromJson(steps.call_backend.outputs.response).review_comment }}
+          ## 🤖 Automated Smart Contract PR Review
+          
+          ${{ steps.call_backend.outputs.review_comment }}
+
+    # Step 7: Final confirmation message
+    - name: Finish workflow
+      run: |
+        echo "🎉 Workflow completed successfully"
+      shell: bash
